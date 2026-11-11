@@ -75,7 +75,12 @@ async def _request(method: str, path: str, *, headers: dict | None = None, **kwa
         resp = await _http.request(
             method,
             path,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", **(headers or {})},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",  # PayPal answers 406 on some calls without this
+                **(headers or {}),
+            },
             **kwargs,
         )
         if resp.status_code == 401 and attempt == 1:
