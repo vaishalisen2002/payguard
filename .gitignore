@@ -22,4 +22,4 @@ env/
 
 # PayPal / build artifacts
 *.log
-paypal_tokens.json
+paypal_tokens.json*.db
