@@ -40,7 +40,7 @@
 | **Action** | Deletes drafts / cancels sent invoices, blocklists phone numbers | PayPal Invoicing v2 |
 | **Notifier** | Emails the trusted contact | **Zapier MCP** (Gmail Send Email tool) |
 
- ![PayGuard architecture](architecture.png)
+[PayGuard architecture](architecture.png)
  
 **Safety by design:** only hard evidence (rules + scam memory) can auto-stop an invoice — an LLM hunch alone can only say "Be careful". Text inside an invoice that tries to instruct the AI is itself treated as a scam signal, so prompt injection makes the score go *up*, not down.
 
