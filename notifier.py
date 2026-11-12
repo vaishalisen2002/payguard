@@ -31,6 +31,7 @@ ACTION_TEXT = {
     "deleted_draft": "PayGuard stopped this invoice before it was sent.",
     "cancelled": "PayGuard cancelled this invoice.",
     "none": "The invoice has NOT been stopped, so they may still see it.",
+    "failed": "PayGuard tried to stop this invoice but could not, so they may still see it.",
     "checked": "They checked this invoice on PayGuard themselves.",
 }
 

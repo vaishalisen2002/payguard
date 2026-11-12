@@ -2,7 +2,7 @@
 
 Usage:  python create_test_invoice.py victim-sandbox-email@personal.example.com [wait_seconds]
 
-wait_seconds (default 25) is how long the "scammer" waits before pressing send.
+wait_seconds (default 30) is how long the "scammer" waits before pressing send.
 Use 0 to send at once and watch PayGuard cancel the invoice after it went out.
 The victim account must be outside India: PayPal blocks India-to-India invoices.
 """
@@ -12,7 +12,7 @@ import sys
 import paypal_client as pp
 
 
-async def main(victim_email: str, wait_seconds: float = 25) -> None:
+async def main(victim_email: str, wait_seconds: float = 30) -> None:
     invoice = await pp.create_invoice(
         recipient_email=victim_email,
         item_name="ShieldPro Security Renewal",
@@ -39,4 +39,4 @@ async def main(victim_email: str, wait_seconds: float = 25) -> None:
 if __name__ == "__main__":
     if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
-    asyncio.run(main(sys.argv[1], float(sys.argv[2]) if len(sys.argv) == 3 else 25))
+    asyncio.run(main(sys.argv[1], float(sys.argv[2]) if len(sys.argv) == 3 else 30))

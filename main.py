@@ -3,6 +3,7 @@
 Run:  uvicorn main:app --reload
 Pages: /check (paste an invoice), /dashboard (everything scanned so far)
 """
+import asyncio
 import hashlib
 import html
 import json
@@ -21,7 +22,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import elastic_client as elastic
 import notifier
 import paypal_client as pp
-from scorer import PHONE_RE, normalize_phone, score_invoice
+from scorer import PHONE_RE, SCAM_THRESHOLD, normalize_phone, run_rules, score_invoice
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -183,6 +184,30 @@ def extract_fields(invoice: dict) -> dict:
     }
 
 
+async def stop_now(invoice_id: str) -> str:
+    """Stop an invoice using its status right now, not the status from before scoring.
+
+    Scoring takes several seconds, and the sender may press send in that time:
+    a draft is deleted, a sent invoice is cancelled. Returns the action taken.
+    """
+    for attempt in (1, 2, 3):
+        try:
+            fresh = await pp.get_invoice(invoice_id)
+        except pp.PayPalError as exc:
+            if exc.status == 404:
+                return "deleted_draft"  # already gone
+            raise
+        status = (fresh.get("status") or "").upper()
+        if status in ("CANCELLED", "PAID", "MARKED_AS_PAID", "REFUNDED"):
+            return "cancelled" if status == "CANCELLED" else "none"
+        try:
+            return await pp.stop_invoice(invoice_id, status, STOP_NOTE)
+        except pp.PayPalError as exc:
+            log.warning("stop attempt %s on %s (status %s) failed: %s", attempt, invoice_id, status, exc)
+            await asyncio.sleep(2)
+    return "failed"
+
+
 async def scan_invoice(invoice_id: str) -> None:
     """Fetch, score, and if needed stop one invoice. Runs in the background."""
     if invoice_id in _in_progress:
@@ -196,19 +221,36 @@ async def scan_invoice(invoice_id: str) -> None:
         ).hexdigest()
 
         previous = get_scan(invoice_id)
-        if previous and (previous["fingerprint"] == fingerprint or previous["action"] != "none"):
-            return  # same content already scanned, or already stopped
+        if previous and previous["action"] in ("deleted_draft", "cancelled"):
+            return  # already stopped
+        if previous and previous["fingerprint"] == fingerprint:
+            # Same content as last time. Only retry a stop that did not succeed.
+            if AUTO_BLOCK and previous["verdict"] == "LIKELY_SCAM":
+                action = await stop_now(invoice_id)
+                with closing(_db()) as conn, conn:
+                    conn.execute("UPDATE scans SET action = ? WHERE invoice_id = ?", (action, invoice_id))
+                log.info("invoice %s retry stop -> %s", invoice_id, action)
+            return
+
+        known_bad = blocked_phones()
+        action = "none"
+
+        # Fast path: when the fixed rules alone are conclusive, stop the invoice
+        # at once and let the slower Judge agent write the explanation afterwards.
+        quick_score = run_rules(f'{fields["item_name"]}\n{fields["text"]}', known_bad)[0]
+        if AUTO_BLOCK and quick_score >= SCAM_THRESHOLD:
+            action = await stop_now(invoice_id)
+            log.info("invoice %s stopped on rules alone (%s/100) -> %s", invoice_id, quick_score, action)
 
         result = await score_invoice(
             fields["item_name"], fields["amount"], fields["text"],
-            currency=fields["currency"], sender=fields["sender"], known_bad_phones=blocked_phones(),
+            currency=fields["currency"], sender=fields["sender"], known_bad_phones=known_bad,
         )
-        action = "none"
         if result["verdict"] == "LIKELY_SCAM":
             block_phones(result["phones"])
             await elastic.remember(fields["text"], label="scam", source="auto")
-            if AUTO_BLOCK:
-                action = await pp.stop_invoice(invoice_id, fields["status"], STOP_NOTE)
+            if AUTO_BLOCK and action in ("none", "failed"):
+                action = await stop_now(invoice_id)
         save_scan(invoice_id, fingerprint, fields, result, action)
         await alert_guardian(
             fields["recipient"], fields["item_name"], f'{fields["amount"]} {fields["currency"]}',
@@ -401,6 +443,7 @@ ACTION_WORDS = {
     "deleted_draft": "Stopped before it was sent",
     "cancelled": "Cancelled after it was sent",
     "none": "Left alone",
+    "failed": "Could not be stopped",
 }
 TEXT = {
     "en": {
